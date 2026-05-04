@@ -1,0 +1,664 @@
+syntax = "proto3";
+
+package minecraft;
+
+option go_package = "github.com/mab-go/golem/internal/grpc/pb";
+
+// MinecraftService is the gRPC contract between the Go agent and the
+// Node.js Mineflayer sidecar. The sidecar implements this service; the
+// Go agent is the client.
+service MinecraftService {
+  // ---- Perception (4 unary) ------------------------------------------------
+
+  rpc GetVitalSigns(GetVitalSignsRequest) returns (GetVitalSignsResponse);
+  rpc GetSurroundings(GetSurroundingsRequest) returns (GetSurroundingsResponse);
+  rpc GetInventory(GetInventoryRequest) returns (GetInventoryResponse);
+  rpc TakeScreenshot(TakeScreenshotRequest) returns (TakeScreenshotResponse);
+
+  // ---- Tier 0: Atomic Actions (10 unary) -----------------------------------
+
+  rpc MoveTo(MoveToRequest) returns (MoveToResponse);
+  rpc LookAt(LookAtRequest) returns (LookAtResponse);
+  rpc PlaceBlock(PlaceBlockRequest) returns (PlaceBlockResponse);
+  rpc DigBlock(DigBlockRequest) returns (DigBlockResponse);
+  rpc EquipItem(EquipItemRequest) returns (EquipItemResponse);
+  rpc UseItem(UseItemRequest) returns (UseItemResponse);
+  rpc AttackEntity(AttackEntityRequest) returns (AttackEntityResponse);
+  rpc Jump(JumpRequest) returns (JumpResponse);
+  rpc SetSneak(SetSneakRequest) returns (SetSneakResponse);
+  rpc SendChat(SendChatRequest) returns (SendChatResponse);
+
+  // ---- Tier 1: Action Verbs (8 unary) --------------------------------------
+
+  rpc NavigateTo(NavigateToRequest) returns (NavigateToResponse);
+  rpc InteractWithEntity(InteractWithEntityRequest) returns (InteractWithEntityResponse);
+  rpc OpenContainer(OpenContainerRequest) returns (OpenContainerResponse);
+  rpc WithdrawFromContainer(WithdrawFromContainerRequest) returns (WithdrawFromContainerResponse);
+  rpc DepositToContainer(DepositToContainerRequest) returns (DepositToContainerResponse);
+  rpc CraftItem(CraftItemRequest) returns (CraftItemResponse);
+  rpc SmeltItem(SmeltItemRequest) returns (SmeltItemResponse);
+  rpc Eat(EatRequest) returns (EatResponse);
+
+  // ---- Tier 2: Goal-Oriented Tasks (7 server-streaming) --------------------
+
+  rpc HarvestBlock(HarvestBlockRequest) returns (stream TaskProgress);
+  rpc Gather(GatherRequest) returns (stream TaskProgress);
+  rpc BuildStructure(BuildStructureRequest) returns (stream TaskProgress);
+  rpc ProcessAll(ProcessAllRequest) returns (stream TaskProgress);
+  rpc OrganizeInventory(OrganizeInventoryRequest) returns (stream TaskProgress);
+  rpc ClearArea(ClearAreaRequest) returns (stream TaskProgress);
+  rpc Farm(FarmRequest) returns (stream TaskProgress);
+
+  // ---- Tier 3: Strategic / Planning (5 unary) ------------------------------
+
+  rpc SurveyArea(SurveyAreaRequest) returns (SurveyAreaResponse);
+  rpc FindNearest(FindNearestRequest) returns (FindNearestResponse);
+  rpc WhatCanICraft(WhatCanICraftRequest) returns (WhatCanICraftResponse);
+  rpc AssessThreat(AssessThreatRequest) returns (AssessThreatResponse);
+  rpc PlanPath(PlanPathRequest) returns (PlanPathResponse);
+
+  // ---- Events (1 server-streaming) -----------------------------------------
+
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream GameEvent);
+}
+
+// =============================================================================
+// Common Types
+// =============================================================================
+
+message Vec3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message Entity {
+  int32 id = 1;
+  string type = 2;           // e.g. "cow", "zombie", "player"
+  string name = 3;           // display name (players) or empty
+  Vec3 position = 4;
+  double distance = 5;
+  double health = 6;
+}
+
+message InventoryItem {
+  string name = 1;
+  int32 count = 2;
+  int32 slot = 3;
+  int32 max_durability = 4;
+  int32 current_durability = 5;
+  string display_name = 6;
+}
+
+message Block {
+  string type = 1;           // e.g. "oak_log", "diamond_ore"
+  Vec3 position = 2;
+  double distance = 3;
+}
+
+message StatusEffect {
+  string name = 1;
+  int32 amplifier = 2;
+  int32 duration_ticks = 3;
+}
+
+// ActionResult is embedded in most action responses.
+message ActionResult {
+  bool success = 1;
+  string error = 2;          // populated only on failure
+  string message = 3;        // human-readable result description
+}
+
+// =============================================================================
+// Perception
+// =============================================================================
+
+// -- GetVitalSigns ---
+
+message GetVitalSignsRequest {}
+
+message GetVitalSignsResponse {
+  double health = 1;              // 0-20
+  double max_health = 2;
+  int32 food = 3;                 // 0-20
+  double food_saturation = 4;
+  int32 oxygen = 5;               // 0-300
+  int32 armor = 6;                // 0-20
+  int32 xp_level = 7;
+  double xp_progress = 8;         // 0.0-1.0
+  string game_mode = 9;           // survival, creative, adventure, spectator
+  InventoryItem main_hand = 10;
+  InventoryItem off_hand = 11;
+  repeated StatusEffect effects = 12;
+}
+
+// -- GetSurroundings ---
+
+message GetSurroundingsRequest {
+  int32 radius = 1;               // block radius to scan (default 16)
+  bool full_update = 2;           // force full update vs delta
+}
+
+message GetSurroundingsResponse {
+  Vec3 position = 1;
+  string biome = 2;
+  string time_of_day = 3;         // dawn, morning, noon, afternoon, dusk, night, midnight
+  bool is_raining = 4;
+  bool is_thundering = 5;
+  int32 light_level = 6;
+  string dimension = 7;           // overworld, the_nether, the_end
+  float yaw = 8;
+  float pitch = 9;
+  repeated Entity nearby_entities = 10;
+  repeated Block notable_blocks = 11;
+}
+
+// -- GetInventory ---
+
+message GetInventoryRequest {
+  bool include_craft_suggestions = 1;
+}
+
+message GetInventoryResponse {
+  repeated InventoryItem items = 1;
+  int32 empty_slots = 2;
+  repeated InventoryItem armor_items = 3;
+  repeated CraftSuggestion craft_suggestions = 4;
+}
+
+message CraftSuggestion {
+  string item_name = 1;
+  int32 max_count = 2;
+  bool requires_crafting_table = 3;
+}
+
+// -- TakeScreenshot ---
+
+enum ScreenshotResolution {
+  SCREENSHOT_RESOLUTION_LOW = 0;    // 480x360
+  SCREENSHOT_RESOLUTION_HIGH = 1;   // 960x720
+}
+
+message TakeScreenshotRequest {
+  ScreenshotResolution resolution = 1;
+  Vec3 look_at = 2;               // optional: direct camera
+}
+
+message TakeScreenshotResponse {
+  bytes image_data = 1;           // PNG bytes
+  int32 width = 2;
+  int32 height = 3;
+  Vec3 camera_position = 4;
+  float camera_yaw = 5;
+  float camera_pitch = 6;
+}
+
+// =============================================================================
+// Tier 0: Atomic Actions
+// =============================================================================
+
+// -- MoveTo ---
+
+message MoveToRequest {
+  Vec3 target = 1;
+  float range = 2;                // how close to get (default 1)
+  bool sprint = 3;
+}
+
+message MoveToResponse {
+  ActionResult result = 1;
+  Vec3 final_position = 2;
+  double distance_remaining = 3;  // distance from final_position to target; 0 on success
+}
+
+// -- LookAt ---
+
+message LookAtRequest {
+  Vec3 target = 1;
+}
+
+message LookAtResponse {
+  ActionResult result = 1;
+}
+
+// -- PlaceBlock ---
+
+message PlaceBlockRequest {
+  Vec3 position = 1;
+  string face = 2;                // top, bottom, north, south, east, west
+  string block_name = 3;          // item to place from inventory
+}
+
+message PlaceBlockResponse {
+  ActionResult result = 1;
+}
+
+// -- DigBlock ---
+
+message DigBlockRequest {
+  Vec3 position = 1;
+}
+
+message DigBlockResponse {
+  ActionResult result = 1;
+  repeated InventoryItem drops = 2;
+}
+
+// -- EquipItem ---
+
+message EquipItemRequest {
+  string item_name = 1;
+  string destination = 2;         // hand, off-hand, head, torso, legs, feet
+}
+
+message EquipItemResponse {
+  ActionResult result = 1;
+}
+
+// -- UseItem ---
+
+message UseItemRequest {}
+
+message UseItemResponse {
+  ActionResult result = 1;
+}
+
+// -- AttackEntity ---
+
+message AttackEntityRequest {
+  int32 entity_id = 1;
+}
+
+message AttackEntityResponse {
+  ActionResult result = 1;
+}
+
+// -- Jump ---
+
+message JumpRequest {}
+
+message JumpResponse {
+  ActionResult result = 1;
+}
+
+// -- SetSneak ---
+
+message SetSneakRequest {
+  bool enabled = 1;
+}
+
+message SetSneakResponse {
+  ActionResult result = 1;
+}
+
+// -- SendChat ---
+
+message SendChatRequest {
+  string message = 1;
+}
+
+message SendChatResponse {
+  ActionResult result = 1;
+}
+
+// =============================================================================
+// Tier 1: Action Verbs
+// =============================================================================
+
+// -- NavigateTo ---
+
+message NavigateToRequest {
+  oneof target {
+    Vec3 position = 1;
+    string entity_name = 2;
+    string block_type = 3;
+  }
+  float range = 4;
+  // If true, pathfinder may mine through blocks and pillar up to reach the
+  // target. Risky -- can dig straight down into lava or off a cliff. Default
+  // false: route over existing terrain only.
+  bool allow_dig = 5;
+}
+
+message NavigateToResponse {
+  ActionResult result = 1;
+  Vec3 final_position = 2;
+  double distance_traveled = 3;
+}
+
+// -- InteractWithEntity ---
+
+enum InteractionType {
+  INTERACTION_HARVEST = 0;
+  INTERACTION_ATTACK = 1;
+  INTERACTION_FEED = 2;
+  INTERACTION_TRADE = 3;
+  INTERACTION_MOUNT = 4;
+  INTERACTION_SHEAR = 5;
+}
+
+message InteractWithEntityRequest {
+  string entity_name = 1;         // type or name to find
+  InteractionType action = 2;
+  int32 entity_id = 3;            // optional: target by ID instead
+}
+
+message InteractWithEntityResponse {
+  ActionResult result = 1;
+  repeated InventoryItem drops = 2;
+  string description = 3;
+}
+
+// -- HarvestBlock ---
+
+message HarvestBlockRequest {
+  string block_type = 1;
+  int32 count = 2;                // how many to harvest (default 1)
+  int32 max_distance = 3;         // search radius
+}
+
+// -- OpenContainer ---
+
+message OpenContainerRequest {
+  oneof target {
+    Vec3 position = 1;
+    string block_type = 2;        // e.g. "chest" -- finds nearest
+  }
+}
+
+message OpenContainerResponse {
+  ActionResult result = 1;
+  repeated InventoryItem contents = 2;
+  string container_type = 3;
+}
+
+// -- WithdrawFromContainer ---
+
+message WithdrawFromContainerRequest {
+  oneof target {
+    Vec3 position = 1;
+    string block_type = 2;
+  }
+  string item_name = 3;
+  int32 count = 4;              // 0 = take all available
+  string slot = 5;              // furnace slot: "input"/"fuel"/"output" (default "output")
+}
+
+message WithdrawFromContainerResponse {
+  ActionResult result = 1;
+  int32 transferred_count = 2;
+  repeated InventoryItem container_remaining = 3;
+}
+
+// -- DepositToContainer ---
+
+message DepositToContainerRequest {
+  oneof target {
+    Vec3 position = 1;
+    string block_type = 2;
+  }
+  string item_name = 3;
+  int32 count = 4;              // 0 = deposit all from inventory
+  string slot = 5;              // furnace slot: "input"/"fuel" (default "input")
+}
+
+message DepositToContainerResponse {
+  ActionResult result = 1;
+  int32 transferred_count = 2;
+  repeated InventoryItem container_remaining = 3;
+}
+
+// -- CraftItem ---
+
+message CraftItemRequest {
+  string item_name = 1;
+  int32 count = 2;  // desired output quantity; sidecar computes recipe executions
+}
+
+message CraftItemResponse {
+  ActionResult result = 1;
+  int32 crafted_count = 2;
+  repeated InventoryItem inventory_after = 3;
+}
+
+// -- SmeltItem ---
+
+message SmeltItemRequest {
+  string item_name = 1;
+  int32 count = 2;
+  string fuel = 3;                // fuel item name (optional -- auto-select)
+}
+
+message SmeltItemResponse {
+  ActionResult result = 1;
+  int32 smelted_count = 2;
+}
+
+// -- Eat ---
+
+message EatRequest {
+  string food_name = 1;           // optional -- auto-select best food if empty
+}
+
+message EatResponse {
+  ActionResult result = 1;
+  string food_used = 2;
+  int32 hunger_restored = 3;
+}
+
+// =============================================================================
+// Tier 2: Goal-Oriented Tasks
+// =============================================================================
+
+enum TaskStatus {
+  TASK_STARTED = 0;
+  TASK_IN_PROGRESS = 1;
+  TASK_COMPLETED = 2;
+  TASK_FAILED = 3;
+  TASK_CANCELLED = 4;
+}
+
+message TaskProgress {
+  string task_id = 1;
+  TaskStatus status = 2;
+  string message = 3;
+  int32 current = 4;              // e.g. items gathered so far
+  int32 total = 5;                // e.g. target quantity
+  TaskResult result = 6;          // populated only on COMPLETED
+}
+
+message TaskResult {
+  bool success = 1;
+  string summary = 2;
+  repeated InventoryItem items_gained = 3;
+  repeated InventoryItem items_used = 4;
+}
+
+// -- Gather ---
+
+message GatherRequest {
+  string resource = 1;            // block type to gather
+  int32 quantity = 2;
+  int32 radius = 3;
+}
+
+// -- BuildStructure ---
+
+message BuildStructureRequest {
+  string type = 1;                // e.g. "shelter"
+  Vec3 location = 2;
+  Vec3 dimensions = 3;            // width, height, depth
+  string material = 4;            // block type
+}
+
+// -- ProcessAll ---
+
+message ProcessAllRequest {
+  string item = 1;                // item to smelt/process
+}
+
+// -- OrganizeInventory ---
+
+message OrganizeInventoryRequest {
+  bool stash_junk = 1;            // deposit low-value items in nearby chest
+}
+
+// -- ClearArea ---
+
+message ClearAreaRequest {
+  Vec3 center = 1;
+  int32 radius = 2;
+}
+
+// -- Farm ---
+
+message FarmRequest {
+  string crop = 1;
+  Vec3 location = 2;
+  int32 radius = 3;
+}
+
+// =============================================================================
+// Tier 3: Strategic / Planning
+// =============================================================================
+
+// -- SurveyArea ---
+
+message SurveyAreaRequest {
+  int32 radius = 1;
+}
+
+message SurveyAreaResponse {
+  repeated BlockCluster block_clusters = 1;
+  repeated Entity entities = 2;
+  repeated Structure structures = 3;
+  string summary = 4;             // natural-language summary
+}
+
+message BlockCluster {
+  string block_type = 1;
+  int32 count = 2;
+  Vec3 center = 3;
+}
+
+message Structure {
+  string type = 1;                // village, cave, mineshaft, etc.
+  Vec3 position = 2;
+  double distance = 3;
+}
+
+// -- FindNearest ---
+
+message FindNearestRequest {
+  oneof target {
+    string block_type = 1;
+    string entity_type = 2;
+    string structure_type = 3;
+  }
+  int32 radius = 4;
+}
+
+message FindNearestResponse {
+  bool found = 1;
+  string type = 2;
+  Vec3 position = 3;
+  double distance = 4;
+}
+
+// -- WhatCanICraft ---
+
+message WhatCanICraftRequest {}
+
+message WhatCanICraftResponse {
+  repeated CraftableItem items = 1;
+}
+
+message CraftableItem {
+  string item_name = 1;
+  int32 max_count = 2;
+  bool requires_crafting_table = 3;
+  repeated string ingredients = 4;
+}
+
+// -- AssessThreat ---
+
+enum ThreatLevel {
+  THREAT_SAFE = 0;
+  THREAT_LOW = 1;
+  THREAT_MODERATE = 2;
+  THREAT_HIGH = 3;
+  THREAT_CRITICAL = 4;
+}
+
+message AssessThreatRequest {
+  int32 radius = 1;
+}
+
+message AssessThreatResponse {
+  ThreatLevel threat_level = 1;
+  repeated Entity hostile_entities = 2;
+  int32 time_until_nightfall = 3; // seconds, -1 if already night
+  int32 local_light_level = 4;
+  string summary = 5;
+}
+
+// -- PlanPath ---
+
+message PlanPathRequest {
+  Vec3 destination = 1;
+  bool allow_dig = 2;
+}
+
+message PlanPathResponse {
+  bool reachable = 1;
+  double distance = 2;
+  int32 estimated_seconds = 3;
+  repeated string hazards = 4;    // "lava", "cliff", "water"
+  repeated Vec3 waypoints = 5;
+}
+
+// =============================================================================
+// Events
+// =============================================================================
+
+enum EventType {
+  EVENT_UNKNOWN = 0;
+  EVENT_ENTITY_SPAWN = 1;
+  EVENT_ENTITY_DESPAWN = 2;
+  EVENT_ENTITY_HURT = 3;
+  EVENT_ENTITY_DEATH = 4;
+  EVENT_HEALTH_CHANGE = 5;
+  EVENT_BOT_DEATH = 6;
+  EVENT_CHAT_MESSAGE = 7;
+  EVENT_DAY_NIGHT = 8;
+  EVENT_WEATHER_CHANGE = 9;
+  EVENT_PLAYER_JOINED = 10;
+  EVENT_PLAYER_LEFT = 11;
+  EVENT_BLOCK_UPDATE = 12;
+  EVENT_AUTOPILOT_ACTION = 13;
+  EVENT_TASK_PROGRESS = 14;
+}
+
+enum EventPriority {
+  EVENT_PRIORITY_LOW = 0;
+  EVENT_PRIORITY_NORMAL = 1;
+  EVENT_PRIORITY_HIGH = 2;
+  EVENT_PRIORITY_CRITICAL = 3;
+}
+
+message SubscribeEventsRequest {
+  repeated EventType filter = 1;  // empty = all events
+}
+
+message GameEvent {
+  EventType type = 1;
+  EventPriority priority = 2;
+  int64 timestamp = 3;            // unix millis
+  string description = 4;
+  // Optional structured data depending on event type
+  Entity entity = 5;
+  string player_name = 6;
+  string chat_message = 7;
+  Vec3 position = 8;
+  string block_type = 9;
+}

@@ -1,0 +1,24 @@
+services:
+  golem:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - GOLEM_SIDECAR_ADDRESS=mineflayer:50051
+      - GOLEM_LOG_LEVEL=debug
+    depends_on:
+      - mineflayer
+
+  mineflayer:
+    build:
+      context: ./sidecar
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      - GOLEM_SIDECAR_PORT=50051
+      - MINECRAFT_HOST=minecraft
+      - MINECRAFT_PORT=25565
+      - MINECRAFT_USERNAME=claude
+      - MINECRAFT_VERSION=1.21.9
+      - MINECRAFT_AUTH=offline

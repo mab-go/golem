@@ -1,0 +1,27 @@
+# Binaries
+/bin/
+/golem*
+/tools/docgen/docgen
+*.exe
+
+# Coverage
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (sidecar)
+sidecar/node_modules/
+sidecar/dist/
+sidecar/*.tsbuildinfo
+sidecar/coverage/
+
+# Agent persistent memory (seeded on first run)
+/memory/
