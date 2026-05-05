@@ -192,6 +192,7 @@ func (o *orchestrator) launchSidecar(ctx context.Context) error {
 	}
 	o.client = client
 	o.pub.PublishComponentStatus("controller", publisher.StatusOK, "Connected")
+	o.program.Send(SidecarReadyMsg{Client: o.client})
 	o.log.WithField("address", o.cfg.SidecarAddress).Info(logging.Event("sidecar.connect"), "connected to sidecar")
 	return nil
 }
@@ -335,6 +336,7 @@ func (o *orchestrator) restartSidecar(ctx context.Context) error {
 	}
 	o.client = client
 	o.pub.PublishComponentStatus("controller", publisher.StatusOK, "Reconnected")
+	o.program.Send(SidecarReadyMsg{Client: o.client})
 	o.log.Info(logging.Event("sidecar.restart"), "sidecar restarted successfully")
 	return nil
 }

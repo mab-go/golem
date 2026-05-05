@@ -115,7 +115,7 @@ func wordSepNormalizeFunc(_ *pflag.FlagSet, name string) pflag.NormalizedName {
 func runTUI(cmd *cobra.Command, _ []string) error {
 	demo, _ := cmd.Flags().GetBool("demo")
 	if demo {
-		m := newModel(true)
+		m := newModel(true, false)
 		p := tea.NewProgram(m)
 		go runDemoDriver(p)
 		_, err := p.Run()
@@ -141,7 +141,7 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 
 	orch := newOrchestrator(cfg)
 	orch.logFiles = lf
-	m := newModel(cfg.ServerEnabled)
+	m := newModel(cfg.ServerEnabled, cfg.NoAgent)
 	m.logFiles = lf
 	p := tea.NewProgram(m)
 

@@ -13,6 +13,7 @@ func renderHelpOverlay(width, height int) string {
 		"  g          Jump to top\n" +
 		"  G          Jump to bottom (follow mode)\n" +
 		"  :          Server command (requires --server)\n" +
+		"  /          Remote command (requires sidecar)\n" +
 		"  ?          Toggle this help\n" +
 		"  q          Quit\n" +
 		"  Ctrl+C     Force quit\n" +

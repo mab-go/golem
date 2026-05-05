@@ -119,6 +119,11 @@ func (c *cmdInput) historyDown() {
 	c.input.CursorEnd()
 }
 
+func (c *cmdInput) SetPrompt(prompt, placeholder string) {
+	c.input.Prompt = prompt
+	c.input.Placeholder = placeholder
+}
+
 func (c *cmdInput) SetWidth(w int) {
 	c.width = w
 	c.input.SetWidth(max(0, w-4))

@@ -11,13 +11,22 @@ import (
 	"github.com/mab-go/golem/internal/publisher"
 )
 
+type inputMode int
+
+const (
+	inputNone   inputMode = iota
+	inputServer           // ":" server command via rcon
+	inputRemote           // "/" remote command via gRPC
+)
+
 type model struct {
 	statusBar     statusBar
 	layout        layout
 	cmdInput      cmdInput
-	inputActive   bool
+	inputMode     inputMode
 	serverEnabled bool
 	execServerCmd func(string) (string, error)
+	remote        *remotePane
 	logFiles      *logFiles
 	width         int
 	height        int
@@ -25,8 +34,16 @@ type model struct {
 	showHelp      bool
 }
 
-func newModel(serverEnabled bool) model {
-	mind := newMindPane()
+func newModel(serverEnabled, noAgent bool) model {
+	var leftPane Pane
+	var remote *remotePane
+	if noAgent {
+		remote = newRemotePane()
+		leftPane = remote
+	} else {
+		leftPane = newMindPane()
+	}
+
 	var tabbed *tabbedPane
 	if serverEnabled {
 		tabbed = newTabbedPane(newLogPane(), newSidecarLogPane(), newServerLogPane(), newEventsPane())
@@ -34,13 +51,14 @@ func newModel(serverEnabled bool) model {
 		tabbed = newTabbedPane(newLogPane(), newSidecarLogPane(), newEventsPane())
 	}
 	chat := newChatPane()
-	lay := newLayout(mind, tabbed, chat)
+	lay := newLayout(leftPane, tabbed, chat)
 
 	return model{
 		statusBar:     newStatusBar(serverEnabled),
 		layout:        lay,
 		cmdInput:      newCmdInput(),
 		serverEnabled: serverEnabled,
+		remote:        remote,
 	}
 }
 
@@ -60,6 +78,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.execServerCmd = msg.ExecCmd
 		return m, nil
 
+	case SidecarReadyMsg:
+		return m.handleSidecarReady(msg)
+
 	case ServerCmdResultMsg:
 		if m.logFiles != nil {
 			m.logFiles.WriteServerCmd(time.Now(), msg.Command, msg.Output, msg.Err)
@@ -73,16 +94,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusBar.UpdateComponent(msg.Component, msg.Status, msg.Detail)
 		return m, nil
 
-	case AgentCycleMsg:
-		m.statusBar.UpdateComponent("player", publisher.StatusOK, "Thinking...")
-
-	case TurnCompleteMsg:
-		m.statusBar.UpdateComponent("player", publisher.StatusOK, "Idle")
+	case AgentCycleMsg, TurnCompleteMsg:
+		m.updateAgentStatus(msg)
 	}
 
 	var cmd tea.Cmd
 	m.layout, cmd = m.layout.Update(msg)
 	return m, cmd
+}
+
+func (m *model) updateAgentStatus(msg tea.Msg) {
+	switch msg.(type) {
+	case AgentCycleMsg:
+		m.statusBar.UpdateComponent("player", publisher.StatusOK, "Thinking...")
+	case TurnCompleteMsg:
+		m.statusBar.UpdateComponent("player", publisher.StatusOK, "Idle")
+	}
+}
+
+func (m model) handleSidecarReady(msg SidecarReadyMsg) (tea.Model, tea.Cmd) {
+	if m.remote != nil {
+		m.statusBar.SetRemoteAvailable(true)
+		return m, m.remote.SetClient(msg.Client)
+	}
+	return m, nil
 }
 
 func (m model) handleResize(msg tea.WindowSizeMsg) model {
@@ -91,7 +126,7 @@ func (m model) handleResize(msg tea.WindowSizeMsg) model {
 	m.statusBar.SetWidth(msg.Width)
 	m.cmdInput.SetWidth(msg.Width)
 	layoutH := msg.Height - 1
-	if m.inputActive {
+	if m.inputMode != inputNone {
 		layoutH = msg.Height - 2
 	}
 	m.layout.SetSize(msg.Width, layoutH)
@@ -104,7 +139,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		return m, nil
 	}
-	if m.inputActive {
+	if m.inputMode != inputNone {
 		return m.handleCmdInputKey(msg)
 	}
 	switch msg.String() {
@@ -124,6 +159,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ":":
 		return m.activateServerCmd()
+	case "/":
+		return m.activateRemoteCmd()
 	}
 
 	var cmd tea.Cmd
@@ -135,8 +172,20 @@ func (m model) activateServerCmd() (tea.Model, tea.Cmd) {
 	if m.execServerCmd == nil {
 		return m, nil
 	}
-	m.inputActive = true
-	m.statusBar.SetInputActive(true)
+	m.inputMode = inputServer
+	m.cmdInput.SetPrompt(":", "server command")
+	m.statusBar.SetInputMode(inputServer)
+	m.layout.SetSize(m.width, m.height-2)
+	return m, m.cmdInput.Activate()
+}
+
+func (m model) activateRemoteCmd() (tea.Model, tea.Cmd) {
+	if m.remote == nil || m.remote.client == nil {
+		return m, nil
+	}
+	m.inputMode = inputRemote
+	m.cmdInput.SetPrompt("/", "remote command")
+	m.statusBar.SetInputMode(inputRemote)
 	m.layout.SetSize(m.width, m.height-2)
 	return m, m.cmdInput.Activate()
 }
@@ -144,18 +193,27 @@ func (m model) activateServerCmd() (tea.Model, tea.Cmd) {
 func (m model) handleCmdInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
+		mode := m.inputMode
 		cmd, ok := m.cmdInput.Submit()
-		m.inputActive = false
-		m.statusBar.SetInputActive(false)
+		m.cmdInput.SetPrompt(":", "server command")
+		m.inputMode = inputNone
+		m.statusBar.SetInputMode(inputNone)
 		m.layout.SetSize(m.width, m.height-1)
-		if ok {
+		if !ok {
+			return m, nil
+		}
+		switch mode {
+		case inputServer:
 			return m, m.runServerCmd(cmd)
+		case inputRemote:
+			return m, m.remote.Execute(cmd)
 		}
 		return m, nil
 	case "escape":
 		m.cmdInput.Deactivate()
-		m.inputActive = false
-		m.statusBar.SetInputActive(false)
+		m.cmdInput.SetPrompt(":", "server command")
+		m.inputMode = inputNone
+		m.statusBar.SetInputMode(inputNone)
 		m.layout.SetSize(m.width, m.height-1)
 		return m, nil
 	default:
@@ -183,7 +241,7 @@ func (m model) View() tea.View {
 		s = renderHelpOverlay(m.width, m.height)
 	default:
 		parts := []string{m.layout.View()}
-		if m.inputActive {
+		if m.inputMode != inputNone {
 			parts = append(parts, m.cmdInput.View())
 		}
 		parts = append(parts, m.statusBar.View())
