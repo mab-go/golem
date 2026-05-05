@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	sidecar "github.com/mab-go/golem/internal/grpc"
 	"github.com/mab-go/golem/internal/logging"
 	"github.com/mab-go/golem/internal/publisher"
 )
@@ -118,4 +119,16 @@ type ServerCmdResultMsg struct {
 // ServerReadyMsg provides the command executor once the Docker server is running.
 type ServerReadyMsg struct {
 	ExecCmd func(string) (string, error)
+}
+
+// SidecarReadyMsg delivers the gRPC client once the sidecar is connected.
+type SidecarReadyMsg struct {
+	Client *sidecar.Client
+}
+
+// RemoteResultMsg carries the result of a remote command executed via gRPC.
+type RemoteResultMsg struct {
+	Command string
+	Output  string
+	Err     error
 }

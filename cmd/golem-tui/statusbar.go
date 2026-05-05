@@ -14,11 +14,12 @@ type componentState struct {
 }
 
 type statusBar struct {
-	width          int
-	components     map[string]componentState
-	componentOrder []string
-	inputActive    bool
-	serverEnabled  bool
+	width           int
+	components      map[string]componentState
+	componentOrder  []string
+	inputMode       inputMode
+	serverEnabled   bool
+	remoteAvailable bool
 }
 
 func newStatusBar(serverEnabled bool) statusBar {
@@ -43,7 +44,7 @@ func (s statusBar) View() string {
 
 	var right string
 	switch {
-	case s.inputActive:
+	case s.inputMode != inputNone:
 		right = s.renderInputHints(remaining)
 	default:
 		summary := s.componentSummary()
@@ -57,13 +58,16 @@ func (s statusBar) View() string {
 }
 
 func (s statusBar) renderInputHints(width int) string {
-	return statusHelpStyle.Width(width).Render("enter send │ esc cancel │ ↑↓ history")
+	return statusHelpStyle.Width(width).Render("enter send | esc cancel | up/down history")
 }
 
 func (s statusBar) renderDefaultHints(width int) string {
-	hints := "q quit │ tab focus │ 1-3 panes │ [ ] tabs │ ? help"
+	hints := "q quit | tab focus | 1-3 panes | [ ] tabs | ? help"
 	if s.serverEnabled {
-		hints += " │ : cmd"
+		hints += " | : cmd"
+	}
+	if s.remoteAvailable {
+		hints += " | / remote"
 	}
 	return statusHelpStyle.Width(width).Render(hints)
 }
@@ -71,7 +75,10 @@ func (s statusBar) renderDefaultHints(width int) string {
 func (s statusBar) renderComponentView(width int, summary string) string {
 	hints := "? help"
 	if s.serverEnabled {
-		hints += " │ : cmd"
+		hints += " | : cmd"
+	}
+	if s.remoteAvailable {
+		hints += " | / remote"
 	}
 	hintsRendered := dimStyle.Render(hints)
 	summaryPadded := " " + summary
@@ -107,8 +114,12 @@ func (s *statusBar) SetWidth(w int) {
 	s.width = w
 }
 
-func (s *statusBar) SetInputActive(active bool) {
-	s.inputActive = active
+func (s *statusBar) SetInputMode(mode inputMode) {
+	s.inputMode = mode
+}
+
+func (s *statusBar) SetRemoteAvailable(available bool) {
+	s.remoteAvailable = available
 }
 
 func renderStatusIndicator(name string, cs componentState) string {
