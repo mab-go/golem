@@ -11,9 +11,11 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="res/golem-hero-dark-5006-1688.png">
-    <img alt="Golem" src="res/golem-hero-light-5006-1688.png">
+    <img alt="Golem"  width="85%" src="res/golem-hero-light-5006-1688.png">
   </picture>
+</p>
 
+<p align="center">
   <em>An autonomous AI agent (powered by Claude) that plays Minecraft as a genuine co-op survival partner.</em>
 </p>
 
@@ -362,7 +364,7 @@ TUI-specific flags: `--sidecar-dir`, `--sidecar-port`, `--sidecar-restart`,
 
 ## Development
 
-```bash
+```
 make setup    # first-time: install Go tools + sidecar npm deps
 make build    # build both binaries + sidecar
 make test     # run tests with -race
@@ -375,8 +377,8 @@ make help     # full target list
 
 All five verification targets must pass before any change is considered done:
 
-```bash
-make fmt && make build && make test && make lint && make cyclo
+```
+make fmt build test lint cyclo
 ```
 
 ### Adding a New Tool
