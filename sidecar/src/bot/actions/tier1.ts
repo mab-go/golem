@@ -16,6 +16,7 @@ import {
   findEntityByName,
   findItemInInventory,
   findItemInWindow,
+  gotoWithRetry,
   gotoWithTimeout,
   mapItemToProto,
   safeMovements,
@@ -75,8 +76,7 @@ export async function navigateTo(bot: Bot, req: NavigateToRequest): Promise<Navi
           distanceTraveled: 0,
         }
       }
-      const p = entity.position
-      goal = new goals.GoalNear(p.x, p.y, p.z, range)
+      goal = new goals.GoalFollow(entity, range)
     } else if (req.blockType !== undefined) {
       const blockInfo = mcData.blocksByName[req.blockType]
       if (!blockInfo) {
@@ -104,7 +104,7 @@ export async function navigateTo(bot: Bot, req: NavigateToRequest): Promise<Navi
       }
     }
 
-    await gotoWithTimeout(bot, goal)
+    await gotoWithRetry(bot, goal)
 
     const endPos = bot.entity.position
     const distanceTraveled = startPos.distanceTo(endPos)
@@ -170,8 +170,7 @@ export async function interactWithEntity(
     // Navigate within range. Walk-only -- digging through stone to reach an
     // entity is never the right move.
     bot.pathfinder.setMovements(safeMovements(bot))
-    const ep = entity.position
-    await gotoWithTimeout(bot, new goals.GoalNear(ep.x, ep.y, ep.z, 3))
+    await gotoWithRetry(bot, new goals.GoalFollow(entity, 3))
 
     const entityDesc = entity.name ?? entity.type ?? "entity"
 
