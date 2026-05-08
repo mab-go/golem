@@ -8,11 +8,21 @@ run:
 linters:
   default: standard
   enable:
+    - cyclop
+    - gocognit
+    - gocyclo
     - gocritic
+    - nestif
     - misspell
     - revive
     - unconvert
     - unparam
+  settings:
+    cyclop:
+      # cyclop counts each switch case as +1 (unlike gocyclo, which counts the
+      # switch itself). Allow 12 to accommodate clean switch dispatchers without
+      # requiring artificial extraction.
+      max-complexity: 12
   exclusions:
     generated: strict
 
