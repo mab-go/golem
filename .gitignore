@@ -6,6 +6,7 @@
 
 # Coverage
 coverage.out
+coverage.filtered.out
 coverage.html
 
 # IDE
