@@ -42,7 +42,7 @@ OPEN ?= $(shell command -v xdg-open 2>/dev/null || echo "open")
         setup setup\:go setup\:sidecar \
         proto proto\:go proto\:ts \
         build build\:go build\:sidecar build\:tui install run \
-        test test\:sidecar \
+        test test\:cover test\:sidecar \
         lint lint\:fix fmt vet cyclo \
         mod\:tidy mod\:verify \
         clean clean\:cache clean\:all \
@@ -158,6 +158,13 @@ ifeq ($(COVER),1)
 	@if [ -z "$$CI" ]; then $(OPEN) coverage.html; $(OPEN) sidecar/coverage/index.html; else echo "Wrote coverage.html and sidecar/coverage/index.html"; fi
 endif
 
+test\:cover: ## Go coverage report; opens HTML unless CI is set (override OPEN=...)
+	go test $(if $(filter 1,$(RACE)),-race,) -coverprofile=coverage.out -covermode=atomic ./...
+	grep -v 'internal/grpc/pb/' coverage.out > coverage.filtered.out
+	go tool cover -func=coverage.filtered.out
+	go tool cover -html=coverage.filtered.out -o coverage.html
+	@if [ -z "$$CI" ]; then $(OPEN) coverage.html; else echo "Wrote coverage.html (CI set, skipping browser)"; fi
+
 test\:sidecar: ## Run sidecar unit tests (COVER=1 for coverage)
 	cd sidecar && npx vitest run $(if $(filter 1,$(COVER)),--coverage,)
 ifeq ($(COVER),1)
@@ -214,7 +221,7 @@ docs\:check: ## Dry-run: fail if generated README sections are stale
 #------------------------------------------------------------------------------
 
 clean: ## Remove built binaries and coverage artifacts
-	rm -f $(BINARY) $(BIN)/golem-tui coverage.out coverage.html
+	rm -f $(BINARY) $(BIN)/golem-tui coverage.out coverage.filtered.out coverage.html
 	rm -rf sidecar/coverage
 
 clean\:cache: ## Clear Go test cache
