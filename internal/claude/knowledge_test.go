@@ -40,3 +40,17 @@ func TestSynthesizeKnowledgeRequestShapesPayload(t *testing.T) {
 		t.Errorf("user message should embed the observations, got:\n%s", body)
 	}
 }
+
+func TestSynthesizeKnowledgeHappyPath(t *testing.T) {
+	ModelWriter = "test-writer"
+	t.Cleanup(func() { ModelWriter = "" })
+
+	c := newTestClient(t, textResponseEvents(t, "Village at 142,68,-231 with iron vein nearby."))
+	got, err := c.SynthesizeKnowledge(context.Background(), "village at 142,68,-231; iron vein at 90,40,0")
+	if err != nil {
+		t.Fatalf("SynthesizeKnowledge: %v", err)
+	}
+	if got != "Village at 142,68,-231 with iron vein nearby." {
+		t.Errorf("got %q", got)
+	}
+}

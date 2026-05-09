@@ -167,6 +167,96 @@ func TestBuildUserMessageSurfacesPlayerChat(t *testing.T) {
 	}
 }
 
+func TestHistoryReset(t *testing.T) {
+	h := NewHistory(10)
+	h.Append(Message{Role: RoleUser, Content: []Block{{Type: BlockText, Text: "a"}}})
+	h.Append(Message{Role: RoleUser, Content: []Block{{Type: BlockText, Text: "b"}}})
+	if h.Len() != 2 {
+		t.Fatalf("Len=%d want 2 before reset", h.Len())
+	}
+	h.Reset()
+	if h.Len() != 0 {
+		t.Errorf("Len=%d want 0 after reset", h.Len())
+	}
+}
+
+func TestTrimFileLong(t *testing.T) {
+	long := strings.Repeat("x", 5000)
+	got := trimFile(long)
+	if !strings.HasPrefix(got, "...(truncated)...") {
+		t.Error("long file should start with truncation marker")
+	}
+	if len(got) > 4096+20 {
+		t.Errorf("trimmed output too long: %d", len(got))
+	}
+}
+
+func TestTailLinesEdgeCases(t *testing.T) {
+	if got := tailLines("", 10); got != "" {
+		t.Errorf("empty input should return empty, got %q", got)
+	}
+	short := "line1\nline2\nline3"
+	if got := tailLines(short, 10); got != short {
+		t.Errorf("short input should return unchanged, got %q", got)
+	}
+	long := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11"
+	got := tailLines(long, 5)
+	if !strings.HasPrefix(got, "...(older journal entries trimmed)...") {
+		t.Error("over-boundary should start with trim marker")
+	}
+	if !strings.Contains(got, "11") {
+		t.Error("should preserve last line")
+	}
+	if strings.Contains(got, "\n1\n") {
+		t.Error("should have dropped early lines")
+	}
+}
+
+func TestBuildUserMessageHeartbeat(t *testing.T) {
+	dir := t.TempDir()
+	mem, _ := memory.New(dir)
+	cb := NewContextBuilder(mem, perception.NewFormatter(perception.FormatProse, perception.VerbosityStandard), NewHistory(10))
+
+	snap := PerceptionSnapshot{
+		Vitals:        &pb.GetVitalSignsResponse{Health: 20, MaxHealth: 20},
+		Surroundings:  &pb.GetSurroundingsResponse{},
+		Inventory:     &pb.GetInventoryResponse{},
+		HeartbeatNote: "You have been idle for 45 seconds.",
+	}
+	msg, err := cb.BuildUserMessage(snap)
+	if err != nil {
+		t.Fatalf("BuildUserMessage: %v", err)
+	}
+	body := msg.Content[0].Text
+	if !strings.Contains(body, "You have been idle for 45 seconds.") {
+		t.Errorf("missing heartbeat note:\n%s", body)
+	}
+}
+
+func TestBuildUserMessageActiveTask(t *testing.T) {
+	dir := t.TempDir()
+	mem, _ := memory.New(dir)
+	cb := NewContextBuilder(mem, perception.NewFormatter(perception.FormatProse, perception.VerbosityStandard), NewHistory(10))
+
+	snap := PerceptionSnapshot{
+		Vitals:       &pb.GetVitalSignsResponse{Health: 20, MaxHealth: 20},
+		Surroundings: &pb.GetSurroundingsResponse{},
+		Inventory:    &pb.GetInventoryResponse{},
+		ActiveTask:   &perception.TaskStatus{Name: "gather stone", Current: 5, Total: 10},
+	}
+	msg, err := cb.BuildUserMessage(snap)
+	if err != nil {
+		t.Fatalf("BuildUserMessage: %v", err)
+	}
+	body := msg.Content[0].Text
+	if !strings.Contains(body, "Active Background Task") {
+		t.Errorf("missing active task header:\n%s", body)
+	}
+	if !strings.Contains(body, "gather stone") {
+		t.Errorf("missing task name:\n%s", body)
+	}
+}
+
 func TestBuildMessagesPrependsHistory(t *testing.T) {
 	dir := t.TempDir()
 	mem, _ := memory.New(dir)
