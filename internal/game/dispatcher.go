@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/mab-go/golem/internal/claude"
-	sidecar "github.com/mab-go/golem/internal/grpc"
 	"github.com/mab-go/golem/internal/logging"
 	"github.com/mab-go/golem/internal/memory"
 	"github.com/mab-go/golem/internal/perception"
@@ -76,7 +75,7 @@ type State interface {
 // Game-logic failures (e.g. "no iron_ore within 16 blocks") are returned as
 // the resultText so Claude can reason about what to do differently.
 type Dispatcher struct {
-	client      *sidecar.Client
+	client      Client
 	memory      *memory.Manager
 	state       State
 	taskMgr     *task.Manager
@@ -102,7 +101,7 @@ type imageHandlerFunc func(ctx context.Context, input json.RawMessage) (Result, 
 
 // NewDispatcher constructs a Dispatcher wired to the sidecar client, memory
 // manager, and agent state. The handler map is built during construction.
-func NewDispatcher(botUsername string, client *sidecar.Client, mem *memory.Manager, state State, taskMgr *task.Manager, pub publisher.EventPublisher, log logging.Logger) *Dispatcher {
+func NewDispatcher(botUsername string, client Client, mem *memory.Manager, state State, taskMgr *task.Manager, pub publisher.EventPublisher, log logging.Logger) *Dispatcher {
 	if pub == nil {
 		pub = publisher.Nop()
 	}
