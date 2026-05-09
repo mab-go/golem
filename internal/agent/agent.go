@@ -61,8 +61,8 @@ func (c *Config) applyDefaults() {
 // Agent owns the Perceive -> Think -> Act -> Remember loop.
 type Agent struct {
 	cfg       Config
-	client    *sidecar.Client
-	ai        *claude.Client
+	client    SidecarClient
+	ai        AIClient
 	memory    *memory.Manager
 	formatter *perception.Formatter
 	pacing    *PacingState
@@ -79,7 +79,7 @@ type Agent struct {
 	chatBuf       []pendingChat
 	wakeChan      chan WakeSignal
 	chatHandler   *ChatInterceptor
-	dispatcher    *game.Dispatcher
+	dispatcher    ToolDispatcher
 	taskMgr       *task.Manager
 	shutdownFunc  context.CancelFunc
 

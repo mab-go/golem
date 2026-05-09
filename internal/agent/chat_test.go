@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -148,5 +149,115 @@ func TestHandleRoutingEmptyMessage(t *testing.T) {
 	res := c.Handle(context.Background(), evt)
 	if !res.Handled {
 		t.Fatal("empty message should be handled (filtered)")
+	}
+}
+
+func newTestInterceptorWithClient(t *testing.T, ms *mockSidecar) *ChatInterceptor {
+	t.Helper()
+	mem, err := memory.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("memory.New: %v", err)
+	}
+	return &ChatInterceptor{
+		client:      ms,
+		pacing:      NewPacingState(perception.VerbosityStandard),
+		memory:      mem,
+		history:     claude.NewHistory(10),
+		botUsername: "claude",
+		shutdown:    func() {},
+		log:         logging.NewDefaultLogger(),
+	}
+}
+
+func TestHandleCommandSendsChatReply(t *testing.T) {
+	var sent string
+	ms := &mockSidecar{
+		SendChatFunc: func(_ context.Context, msg string) error {
+			sent = msg
+			return nil
+		},
+	}
+	c := newTestInterceptorWithClient(t, ms)
+	evt := &pb.GameEvent{
+		Type:        pb.EventType_EVENT_CHAT_MESSAGE,
+		PlayerName:  "alice",
+		ChatMessage: "/golem pause",
+	}
+	res := c.Handle(context.Background(), evt)
+	if !res.Handled {
+		t.Fatal("command should be handled")
+	}
+	if sent == "" {
+		t.Fatal("expected SendChat to be called with reply")
+	}
+	if !c.pacing.Paused() {
+		t.Error("expected paused after /golem pause")
+	}
+}
+
+func TestHandleCommandSendChatError(t *testing.T) {
+	ms := &mockSidecar{
+		SendChatFunc: func(_ context.Context, _ string) error {
+			return errors.New("connection lost")
+		},
+	}
+	c := newTestInterceptorWithClient(t, ms)
+	evt := &pb.GameEvent{
+		Type:        pb.EventType_EVENT_CHAT_MESSAGE,
+		PlayerName:  "alice",
+		ChatMessage: "/golem help",
+	}
+	res := c.Handle(context.Background(), evt)
+	if !res.Handled {
+		t.Fatal("command should still be handled even if SendChat fails")
+	}
+}
+
+func TestHandleStopSendsChatReply(t *testing.T) {
+	var sent string
+	ms := &mockSidecar{
+		SendChatFunc: func(_ context.Context, msg string) error {
+			sent = msg
+			return nil
+		},
+	}
+	c := newTestInterceptorWithClient(t, ms)
+	evt := &pb.GameEvent{
+		Type:        pb.EventType_EVENT_CHAT_MESSAGE,
+		PlayerName:  "bob",
+		ChatMessage: "/golem stop",
+	}
+	res := c.Handle(context.Background(), evt)
+	if !res.Handled {
+		t.Fatal("stop command should be handled")
+	}
+	if !res.EmergencyStop {
+		t.Fatal("expected EmergencyStop=true")
+	}
+	if res.Sender != "bob" {
+		t.Errorf("Sender = %q, want %q", res.Sender, "bob")
+	}
+	if sent == "" {
+		t.Fatal("expected SendChat to be called with reply")
+	}
+}
+
+func TestHandleNilEvent(t *testing.T) {
+	c := newTestInterceptor(t)
+	res := c.Handle(context.Background(), nil)
+	if !res.Handled {
+		t.Fatal("nil event should be handled")
+	}
+}
+
+func TestHandleNonChatEvent(t *testing.T) {
+	c := newTestInterceptor(t)
+	evt := &pb.GameEvent{
+		Type:        pb.EventType_EVENT_WEATHER_CHANGE,
+		Description: "it started raining",
+	}
+	res := c.Handle(context.Background(), evt)
+	if !res.Handled {
+		t.Fatal("non-chat event should be handled (filtered)")
 	}
 }
