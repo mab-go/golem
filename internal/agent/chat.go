@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/mab-go/golem/internal/claude"
-	sidecar "github.com/mab-go/golem/internal/grpc"
 	"github.com/mab-go/golem/internal/grpc/pb"
 	"github.com/mab-go/golem/internal/logging"
 	"github.com/mab-go/golem/internal/memory"
@@ -21,7 +20,7 @@ const OperatorCommandPrefix = "/golem"
 // in-process. When a regular chat message passes through, it returns the text
 // for the agent loop to surface as an Interrupt.
 type ChatInterceptor struct {
-	client      *sidecar.Client
+	client      SidecarClient
 	pacing      *PacingState
 	memory      *memory.Manager
 	history     *claude.History
@@ -33,7 +32,7 @@ type ChatInterceptor struct {
 // NewChatInterceptor constructs a chat interceptor. `shutdown` is invoked for
 // `/golem shutdown`.
 func NewChatInterceptor(
-	client *sidecar.Client,
+	client SidecarClient,
 	pacing *PacingState,
 	mem *memory.Manager,
 	hist *claude.History,
