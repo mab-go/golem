@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -59,5 +60,33 @@ func TestToolsByNameIncludesThinkDeeply(t *testing.T) {
 	m := ToolsByName()
 	if _, ok := m[ToolThinkDeeply]; !ok {
 		t.Error("ToolsByName() should include think_deeply")
+	}
+}
+
+func TestThinkDeeplyHappyPath(t *testing.T) {
+	ModelDeep = "test-deep"
+	t.Cleanup(func() { ModelDeep = "" })
+
+	c := newTestClient(t, textResponseEvents(t, "Build your base near the river for water access."))
+	resp, err := c.ThinkDeeply(context.Background(), "Where should I build my base?", "Near a river in plains biome")
+	if err != nil {
+		t.Fatalf("ThinkDeeply: %v", err)
+	}
+	if resp.Text != "Build your base near the river for water access." {
+		t.Errorf("text=%q", resp.Text)
+	}
+}
+
+func TestThinkDeeplyNoContext(t *testing.T) {
+	ModelDeep = "test-deep"
+	t.Cleanup(func() { ModelDeep = "" })
+
+	c := newTestClient(t, textResponseEvents(t, "Just explore."))
+	resp, err := c.ThinkDeeply(context.Background(), "What should I do?", "")
+	if err != nil {
+		t.Fatalf("ThinkDeeply: %v", err)
+	}
+	if resp.Text != "Just explore." {
+		t.Errorf("text=%q", resp.Text)
 	}
 }

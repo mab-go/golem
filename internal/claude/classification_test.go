@@ -2,10 +2,13 @@ package claude
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/mab-go/golem/internal/grpc/pb"
+	"github.com/mab-go/golem/internal/logging"
 )
 
 func TestClassifyEventsEmptyShortCircuits(t *testing.T) {
@@ -139,6 +142,55 @@ func TestMergeClassificationsIgnoresUnknownPriority(t *testing.T) {
 	}
 }
 
+func TestClassifyEventsRequestNilEvent(t *testing.T) {
+	events := []*pb.GameEvent{
+		nil,
+		{Type: pb.EventType_EVENT_BOT_DEATH, Description: "fell", Priority: pb.EventPriority_EVENT_PRIORITY_CRITICAL},
+	}
+	_, msgs := classifyEventsRequest(events)
+	body := msgs[0].Content[0].Text
+	if !strings.Contains(body, "[0] (empty)") {
+		t.Errorf("nil event should produce (empty) marker:\n%s", body)
+	}
+	if !strings.Contains(body, "fell") {
+		t.Errorf("non-nil event should be present:\n%s", body)
+	}
+}
+
+func TestClassifyEventsRequestNoDescription(t *testing.T) {
+	events := []*pb.GameEvent{
+		{Type: pb.EventType_EVENT_WEATHER_CHANGE, Priority: pb.EventPriority_EVENT_PRIORITY_LOW},
+	}
+	_, msgs := classifyEventsRequest(events)
+	body := msgs[0].Content[0].Text
+	if !strings.Contains(body, "EVENT_WEATHER_CHANGE") {
+		t.Errorf("empty description should fall back to Type.String():\n%s", body)
+	}
+}
+
+func TestPriorityFromStringExtraCases(t *testing.T) {
+	cases := []struct {
+		input string
+		want  pb.EventPriority
+		ok    bool
+	}{
+		{" High ", pb.EventPriority_EVENT_PRIORITY_HIGH, true},
+		{"CRITICAL", pb.EventPriority_EVENT_PRIORITY_CRITICAL, true},
+		{"LOW", pb.EventPriority_EVENT_PRIORITY_LOW, true},
+		{"unknown", 0, false},
+		{"", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := priorityFromString(tc.input)
+		if ok != tc.ok {
+			t.Errorf("priorityFromString(%q) ok=%v, want %v", tc.input, ok, tc.ok)
+		}
+		if ok && got != tc.want {
+			t.Errorf("priorityFromString(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestFallbackClassifiedPreservesLength(t *testing.T) {
 	events := []*pb.GameEvent{
 		{Type: pb.EventType_EVENT_ENTITY_SPAWN, Priority: pb.EventPriority_EVENT_PRIORITY_LOW},
@@ -154,5 +206,61 @@ func TestFallbackClassifiedPreservesLength(t *testing.T) {
 	}
 	if got[2].Priority != pb.EventPriority_EVENT_PRIORITY_CRITICAL {
 		t.Errorf("row 2: got %v", got[2].Priority)
+	}
+}
+
+func TestClassifyEventsHappyPath(t *testing.T) {
+	ModelWorkhorse = "test-workhorse"
+	t.Cleanup(func() { ModelWorkhorse = "" })
+
+	respJSON := `[{"index":0,"priority":"critical","reason":"died in lava"},{"index":1,"priority":"low","reason":"routine"}]`
+	c := newTestClient(t, textResponseEvents(t, respJSON))
+
+	events := []*pb.GameEvent{
+		{Type: pb.EventType_EVENT_BOT_DEATH, Priority: pb.EventPriority_EVENT_PRIORITY_NORMAL, Description: "fell in lava"},
+		{Type: pb.EventType_EVENT_ENTITY_SPAWN, Priority: pb.EventPriority_EVENT_PRIORITY_LOW, Description: "cow spawned"},
+	}
+	got, err := c.ClassifyEvents(context.Background(), events)
+	if err != nil {
+		t.Fatalf("ClassifyEvents: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 classified events, got %d", len(got))
+	}
+	if got[0].Priority != pb.EventPriority_EVENT_PRIORITY_CRITICAL {
+		t.Errorf("event[0] priority=%v, want CRITICAL", got[0].Priority)
+	}
+	if got[0].Reason != "died in lava" {
+		t.Errorf("event[0] reason=%q, want 'died in lava'", got[0].Reason)
+	}
+	if got[1].Priority != pb.EventPriority_EVENT_PRIORITY_LOW {
+		t.Errorf("event[1] priority=%v, want LOW", got[1].Priority)
+	}
+}
+
+func TestClassifyEventsAPIError(t *testing.T) {
+	ModelWorkhorse = "test-workhorse"
+	t.Cleanup(func() { ModelWorkhorse = "" })
+
+	c := &Client{
+		log:       logging.NewDefaultLogger(),
+		maxTokens: DefaultMaxTokens,
+	}
+	c.newStream = func(_ context.Context, _ anthropic.MessageNewParams) streamSource {
+		return &fakeStream{err: errors.New("connection refused")}
+	}
+
+	events := []*pb.GameEvent{
+		{Type: pb.EventType_EVENT_BOT_DEATH, Priority: pb.EventPriority_EVENT_PRIORITY_CRITICAL},
+	}
+	got, err := c.ClassifyEvents(context.Background(), events)
+	if err == nil {
+		t.Fatal("expected error from stream failure")
+	}
+	if len(got) != 1 {
+		t.Fatalf("fallback should return same-length slice, got %d", len(got))
+	}
+	if got[0].Priority != pb.EventPriority_EVENT_PRIORITY_CRITICAL {
+		t.Errorf("fallback should preserve original priority, got %v", got[0].Priority)
 	}
 }

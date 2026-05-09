@@ -112,6 +112,18 @@ func TestStartSummaryLoopExitsOnContextCancel(t *testing.T) {
 	}
 }
 
+func TestEmitSummary(_ *testing.T) {
+	m := NewMetrics()
+	m.Record("model-a", Usage{InputTokens: 100, OutputTokens: 50})
+	m.Record("model-b", Usage{InputTokens: 200, OutputTokens: 75})
+	m.emitSummary(logging.NewDefaultLogger())
+}
+
+func TestEmitSummaryEmpty(_ *testing.T) {
+	m := NewMetrics()
+	m.emitSummary(logging.NewDefaultLogger())
+}
+
 func TestStartSummaryLoopNoOpOnZeroInterval(t *testing.T) {
 	m := NewMetrics()
 

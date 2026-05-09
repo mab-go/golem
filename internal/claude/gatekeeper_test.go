@@ -1,11 +1,15 @@
 package claude
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/mab-go/golem/internal/grpc/pb"
+	"github.com/mab-go/golem/internal/logging"
 	"github.com/mab-go/golem/internal/perception"
 )
 
@@ -225,6 +229,34 @@ func TestGatekeeperPromptNoStaleness(t *testing.T) {
 	}
 }
 
+func TestWriteEventListNilEvent(t *testing.T) {
+	events := []*pb.GameEvent{
+		nil,
+		{Type: pb.EventType_EVENT_ENTITY_SPAWN, Priority: pb.EventPriority_EVENT_PRIORITY_LOW, Description: "cow spawned"},
+	}
+	var b strings.Builder
+	writeEventList(&b, events)
+	out := b.String()
+	if !strings.Contains(out, "Events (2):") {
+		t.Errorf("should report event count including nil: %s", out)
+	}
+	if !strings.Contains(out, "cow spawned") {
+		t.Errorf("non-nil event should be formatted: %s", out)
+	}
+}
+
+func TestWriteEventListNoDescription(t *testing.T) {
+	events := []*pb.GameEvent{
+		{Type: pb.EventType_EVENT_WEATHER_CHANGE, Priority: pb.EventPriority_EVENT_PRIORITY_LOW},
+	}
+	var b strings.Builder
+	writeEventList(&b, events)
+	out := b.String()
+	if !strings.Contains(out, "EVENT_WEATHER_CHANGE") {
+		t.Errorf("empty description should fall back to Type.String(): %s", out)
+	}
+}
+
 func TestFormatGatekeeperInput_NeutralCategory(t *testing.T) {
 	snap := GatekeeperSnapshot{
 		TimeSinceWake: 5 * time.Second,
@@ -244,5 +276,62 @@ func TestFormatGatekeeperInput_NeutralCategory(t *testing.T) {
 	}
 	if !strings.Contains(out, "1 bee (8 blk)") {
 		t.Errorf("should show bee\n%s", out)
+	}
+}
+
+func TestGatekeeperCheckHappyPath(t *testing.T) {
+	ModelWorkhorse = "test-workhorse"
+	t.Cleanup(func() { ModelWorkhorse = "" })
+
+	respJSON := `{"wake":true,"reason":"taking damage","events":[{"index":0,"priority":"high","reason":"damage"}]}`
+	c := newTestClient(t, textResponseEvents(t, respJSON))
+
+	snap := GatekeeperSnapshot{
+		Vitals:        &pb.GetVitalSignsResponse{Health: 10, MaxHealth: 20, Food: 18},
+		TimeSinceWake: 5 * time.Second,
+		Events: []*pb.GameEvent{
+			{Type: pb.EventType_EVENT_HEALTH_CHANGE, Priority: pb.EventPriority_EVENT_PRIORITY_NORMAL, Description: "took damage"},
+		},
+	}
+	decision, err := c.GatekeeperCheck(context.Background(), snap)
+	if err != nil {
+		t.Fatalf("GatekeeperCheck: %v", err)
+	}
+	if !decision.Wake {
+		t.Error("expected wake=true")
+	}
+	if decision.Reason != "taking damage" {
+		t.Errorf("reason=%q, want 'taking damage'", decision.Reason)
+	}
+	if len(decision.ClassifiedEvents) != 1 {
+		t.Fatalf("classified events len=%d, want 1", len(decision.ClassifiedEvents))
+	}
+	if decision.ClassifiedEvents[0].Priority != pb.EventPriority_EVENT_PRIORITY_HIGH {
+		t.Errorf("event priority=%v, want HIGH", decision.ClassifiedEvents[0].Priority)
+	}
+}
+
+func TestGatekeeperCheckFailOpen(t *testing.T) {
+	ModelWorkhorse = "test-workhorse"
+	t.Cleanup(func() { ModelWorkhorse = "" })
+
+	c := &Client{
+		log:       logging.NewDefaultLogger(),
+		maxTokens: DefaultMaxTokens,
+	}
+	c.newStream = func(_ context.Context, _ anthropic.MessageNewParams) streamSource {
+		return &fakeStream{err: errors.New("connection refused")}
+	}
+
+	snap := GatekeeperSnapshot{TimeSinceWake: 5 * time.Second}
+	decision, err := c.GatekeeperCheck(context.Background(), snap)
+	if err == nil {
+		t.Fatal("expected error from stream failure")
+	}
+	if !decision.Wake {
+		t.Error("should fail open (wake=true) on error")
+	}
+	if !strings.Contains(decision.Reason, "fail-open") {
+		t.Errorf("reason=%q, should mention fail-open", decision.Reason)
 	}
 }

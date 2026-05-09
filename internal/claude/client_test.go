@@ -2,7 +2,9 @@ package claude
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -313,6 +315,106 @@ func TestAccumulateSilent(t *testing.T) {
 	}
 }
 
+func TestToolResultBlockWithImage(t *testing.T) {
+	b := Block{
+		Type:      BlockToolResult,
+		ToolUseID: "tu_img",
+		ImageData: []byte{0x89, 0x50, 0x4E, 0x47},
+	}
+	result := toolResultBlock(b)
+	tr := result.OfToolResult
+	if tr == nil {
+		t.Fatal("expected OfToolResult to be set")
+	}
+	if tr.ToolUseID != "tu_img" {
+		t.Errorf("ToolUseID = %q, want tu_img", tr.ToolUseID)
+	}
+	if len(tr.Content) != 1 {
+		t.Fatalf("expected 1 content element (image only), got %d", len(tr.Content))
+	}
+	img := tr.Content[0].OfImage
+	if img == nil {
+		t.Fatal("expected image content element")
+	}
+	src := img.Source.OfBase64
+	if src == nil {
+		t.Fatal("expected base64 image source")
+	}
+	if string(src.MediaType) != "image/png" {
+		t.Errorf("media type = %q, want image/png", src.MediaType)
+	}
+	if src.Data == "" {
+		t.Error("expected non-empty base64 data")
+	}
+}
+
+func TestToolResultBlockWithImageAndText(t *testing.T) {
+	b := Block{
+		Type:      BlockToolResult,
+		ToolUseID: "tu_both",
+		Content:   "screenshot captured",
+		ImageData: []byte{0xFF, 0xD8},
+	}
+	result := toolResultBlock(b)
+	tr := result.OfToolResult
+	if tr == nil {
+		t.Fatal("expected OfToolResult")
+	}
+	if len(tr.Content) != 2 {
+		t.Fatalf("expected 2 content elements (text+image), got %d", len(tr.Content))
+	}
+	if tr.Content[0].OfText == nil || tr.Content[0].OfText.Text != "screenshot captured" {
+		t.Errorf("first element should be text, got %+v", tr.Content[0])
+	}
+	if tr.Content[1].OfImage == nil {
+		t.Error("second element should be image")
+	}
+}
+
+func TestToolResultBlockCustomMediaType(t *testing.T) {
+	b := Block{
+		Type:           BlockToolResult,
+		ToolUseID:      "tu_jpeg",
+		ImageData:      []byte{0xFF, 0xD8},
+		ImageMediaType: "image/jpeg",
+	}
+	result := toolResultBlock(b)
+	src := result.OfToolResult.Content[0].OfImage.Source.OfBase64
+	if string(src.MediaType) != "image/jpeg" {
+		t.Errorf("media type = %q, want image/jpeg", src.MediaType)
+	}
+}
+
+func TestMarkLastBlockCachedEmpty(_ *testing.T) {
+	markLastBlockCached(nil)
+	markLastBlockCached([]sdk.MessageParam{})
+}
+
+func TestToSDKToolsWithDescription(t *testing.T) {
+	in := []Tool{{
+		Name:        "test_tool",
+		Description: "A test tool",
+		InputSchema: map[string]any{"properties": map[string]any{}},
+	}}
+	out := toSDKTools(in)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(out))
+	}
+	data, err := json.Marshal(out[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), "A test tool") {
+		t.Errorf("expected description in output: %s", data)
+	}
+}
+
+func TestToSDKToolsEmpty(t *testing.T) {
+	if got := toSDKTools(nil); got != nil {
+		t.Errorf("nil input should return nil, got %d tools", len(got))
+	}
+}
+
 func TestAccumulateNilDeltaFunc(t *testing.T) {
 	events := []sdk.MessageStreamEventUnion{
 		streamEvent(t, `{"type":"message_start","message":{"id":"m_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}`),
@@ -329,5 +431,126 @@ func TestAccumulateNilDeltaFunc(t *testing.T) {
 	}
 	if resp.Text != "hello" {
 		t.Errorf("text=%q", resp.Text)
+	}
+}
+
+// textResponseEvents builds the minimal 6-event SSE sequence that
+// produces a text-only response with the given body.
+func textResponseEvents(t *testing.T, text string) []sdk.MessageStreamEventUnion {
+	t.Helper()
+	return []sdk.MessageStreamEventUnion{
+		streamEvent(t, `{"type":"message_start","message":{"id":"m_1","type":"message","role":"assistant","model":"test-model","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}`),
+		streamEvent(t, `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`),
+		streamEvent(t, fmt.Sprintf(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%s}}`, mustJSON(t, text))),
+		streamEvent(t, `{"type":"content_block_stop","index":0}`),
+		streamEvent(t, `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}`),
+		streamEvent(t, `{"type":"message_stop"}`),
+	}
+}
+
+func mustJSON(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("json.Marshal(%q): %v", s, err)
+	}
+	return string(b)
+}
+
+func newTestClient(t *testing.T, events []sdk.MessageStreamEventUnion) *Client {
+	t.Helper()
+	c := &Client{
+		log:       logging.NewDefaultLogger(),
+		maxTokens: DefaultMaxTokens,
+	}
+	c.newStream = func(_ context.Context, _ sdk.MessageNewParams) streamSource {
+		return &fakeStream{events: events}
+	}
+	return c
+}
+
+func TestSendMessagePartsValidation(t *testing.T) {
+	c := newTestClient(t, nil)
+	msgs := []Message{{Role: RoleUser, Content: []Block{{Type: BlockText, Text: "hi"}}}}
+
+	if _, err := c.SendMessageParts(context.Background(), "", CacheableSystemPrompt{}, msgs, nil); err == nil {
+		t.Error("empty model should return error")
+	}
+	if _, err := c.SendMessageParts(context.Background(), "model", CacheableSystemPrompt{}, nil, nil); err == nil {
+		t.Error("empty messages should return error")
+	}
+}
+
+func TestSendMessagePartsHappyPath(t *testing.T) {
+	events := textResponseEvents(t, "hello world")
+	c := newTestClient(t, events)
+	msgs := []Message{{Role: RoleUser, Content: []Block{{Type: BlockText, Text: "hi"}}}}
+
+	resp, err := c.SendMessageParts(context.Background(), "test-model", CacheableSystemPrompt{Stable: "be helpful"}, msgs, nil)
+	if err != nil {
+		t.Fatalf("SendMessageParts: %v", err)
+	}
+	if resp.Text != "hello world" {
+		t.Errorf("text=%q, want 'hello world'", resp.Text)
+	}
+}
+
+func TestSendMessagePartsWithTextDelta(t *testing.T) {
+	events := textResponseEvents(t, "delta test")
+	c := newTestClient(t, events)
+	c.TextDeltaFunc = func(_ string) { t.Error("client-level delta should not be called") }
+
+	var got []string
+	msgs := []Message{{Role: RoleUser, Content: []Block{{Type: BlockText, Text: "hi"}}}}
+	_, err := c.SendMessageParts(context.Background(), "m", CacheableSystemPrompt{}, msgs, nil,
+		WithTextDelta(func(s string) { got = append(got, s) }))
+	if err != nil {
+		t.Fatalf("SendMessageParts: %v", err)
+	}
+	if len(got) == 0 {
+		t.Error("per-call delta func should have been called")
+	}
+}
+
+func TestSendMessagePartsSilent(t *testing.T) {
+	events := textResponseEvents(t, "silent test")
+	c := newTestClient(t, events)
+	called := false
+	c.TextDeltaFunc = func(_ string) { called = true }
+
+	msgs := []Message{{Role: RoleUser, Content: []Block{{Type: BlockText, Text: "hi"}}}}
+	_, err := c.SendMessageParts(context.Background(), "m", CacheableSystemPrompt{}, msgs, nil, Silent())
+	if err != nil {
+		t.Fatalf("SendMessageParts: %v", err)
+	}
+	if called {
+		t.Error("client-level delta should not be called with Silent()")
+	}
+}
+
+func TestSendMessageDelegates(t *testing.T) {
+	events := textResponseEvents(t, "delegated")
+	c := newTestClient(t, events)
+	msgs := []Message{{Role: RoleUser, Content: []Block{{Type: BlockText, Text: "hi"}}}}
+
+	resp, err := c.SendMessage(context.Background(), "m", "system prompt", msgs, nil)
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if resp.Text != "delegated" {
+		t.Errorf("text=%q, want 'delegated'", resp.Text)
+	}
+}
+
+func TestNewClientDefaults(t *testing.T) {
+	c := NewClient("", 0, nil, nil)
+	if c.maxTokens != DefaultMaxTokens {
+		t.Errorf("maxTokens=%d, want %d", c.maxTokens, DefaultMaxTokens)
+	}
+	if c.log == nil {
+		t.Error("nil logger should be replaced with default")
+	}
+	if c.newStream == nil {
+		t.Error("newStream should be wired")
 	}
 }

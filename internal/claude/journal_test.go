@@ -40,3 +40,17 @@ func TestCompactJournalRequestShapesPayload(t *testing.T) {
 		t.Errorf("user message should embed the journal entries, got:\n%s", body)
 	}
 }
+
+func TestCompactJournalHappyPath(t *testing.T) {
+	ModelWriter = "test-writer"
+	t.Cleanup(func() { ModelWriter = "" })
+
+	c := newTestClient(t, textResponseEvents(t, "Explored a cave and found iron."))
+	got, err := c.CompactJournal(context.Background(), "## Day 1\n\nWent into cave. Found iron ore.")
+	if err != nil {
+		t.Fatalf("CompactJournal: %v", err)
+	}
+	if got != "Explored a cave and found iron." {
+		t.Errorf("got %q", got)
+	}
+}

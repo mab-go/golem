@@ -114,6 +114,10 @@ type Client struct {
 	// during streaming. The TUI sets this to publish deltas; nil means no-op.
 	// Per-call overrides via WithTextDelta / Silent take precedence.
 	TextDeltaFunc func(string)
+
+	// newStream creates a streaming Messages request. Tests replace this to
+	// inject a fakeStream without touching the real Anthropic API.
+	newStream func(ctx context.Context, params anthropic.MessageNewParams) streamSource
 }
 
 // CallOption configures a single SendMessage / SendMessageParts call.
@@ -148,12 +152,16 @@ func NewClient(apiKey string, maxTokens int64, metrics *Metrics, log logging.Log
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
-	return &Client{
+	c := &Client{
 		sdk:       anthropic.NewClient(opts...),
 		log:       log,
 		maxTokens: maxTokens,
 		metrics:   metrics,
 	}
+	c.newStream = func(ctx context.Context, params anthropic.MessageNewParams) streamSource {
+		return c.sdk.Messages.NewStreaming(ctx, params)
+	}
+	return c
 }
 
 // SendMessage issues a streaming Messages request with a single system-prompt
@@ -208,7 +216,7 @@ func (c *Client) SendMessageParts(
 		Tools:     toSDKTools(tools),
 	}
 
-	stream := c.sdk.Messages.NewStreaming(ctx, params)
+	stream := c.newStream(ctx, params)
 	return c.accumulate(stream, deltaFn)
 }
 
