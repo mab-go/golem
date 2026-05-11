@@ -74,11 +74,6 @@ or improve.
 
 ## Conventions
 
-**mab-go patterns.** Study sibling projects for established CLI,
-config, error handling, and Makefile conventions:
-- xmind-mcp: `/home/matt/Projects/mcp/xmind-mcp`
-- sheets-mcp: `/home/matt/Projects/mcp/sheets-mcp`
-
 **Logging.** `internal/logging/` follows the mab-go pattern. DO NOT MODIFY this package.
 
 **Config.** Viper with env prefix `GOLEM`. Key:
